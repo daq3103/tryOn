@@ -19,10 +19,10 @@ class ZeroShotTryOn(nn.Module):
         C_txt = self.txt.encode(prompts, device=person_tensor.device)        # [B,Lt,768]
         C_gar = self.gar(garment_tensor)                                     # [B,Lg,768]
         C_per = self.per(person_tensor)                                      # [B,Lp,768]
-        # global person pooling
-        p_global = C_per.mean(dim=1)                                         # [B,768]
-        return {"text":C_txt, "garment":C_gar, "person":C_per,
-                "t_embed":t_embed, "person_global":p_global}
+        
+        # Concatenate thành 1 tensor thay vì dict
+        context = torch.cat([C_txt, C_gar, C_per], dim=1)  # [B, Lt+Lg+Lp, 768]
+        return context
 
     def forward(self, imgs, person_cond, garment_img, prompts):
         """
@@ -39,13 +39,10 @@ class ZeroShotTryOn(nn.Module):
         timesteps = torch.randint(0, self.scheduler.config.num_train_timesteps, (latents.size(0),), device=latents.device)
         noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
 
-        # t embedding (dùng chính temb của UNet)
-        t_embed = self.unet.time_proj(timesteps).to(latents.dtype)
+        # context (giờ là tensor thay vì dict)
+        ctx = self._make_context(person_cond, garment_img, prompts, None)
 
-        # context
-        ctx = self._make_context(person_cond, garment_img, prompts, t_embed)
-
-        # UNet noise prediction (epsilon) - sử dụng context dict
+        # UNet noise prediction (epsilon)
         model_pred = self.unet(noisy_latents, timesteps, encoder_hidden_states=ctx).sample
 
         # simple L2
