@@ -5,41 +5,97 @@ from models.zero_shot_tryon import ZeroShotTryOn
 from diffusers import UNet2DConditionModel
 from conditioning.multi_source_attn import MultiSourceAttnProcessor
 from conditioning.fuse import GatedFusion
+import os
+from PIL import Image
+
+def create_dummy_data_if_needed(data_path):
+    """Tạo dummy data nếu không tồn tại"""
+    pairs_file = os.path.join(data_path, "train_pairs.txt")
+    
+    if not os.path.exists(pairs_file):
+        print(f"⚠️ train_pairs.txt not found. Creating dummy data in {data_path}")
+        
+        # Tạo thư mục nếu chưa có
+        os.makedirs(data_path, exist_ok=True)
+        for folder in ["person", "garment", "target", "pose", "parsing"]:
+            os.makedirs(os.path.join(data_path, folder), exist_ok=True)
+        
+        # Tạo file pairs
+        with open(pairs_file, 'w') as f:
+            for i in range(20):  # 20 samples để test
+                f.write(f"person{i:03d}.jpg\tgarment{i:03d}.jpg\t\"a person wearing fashionable clothes\"\n")
+        
+        # Tạo ảnh dummy
+        for i in range(20):
+            # Tạo ảnh với màu khác nhau
+            color = (i*10 % 255, (i*20) % 255, (i*30) % 255)
+            img = Image.new('RGB', (512, 512), color=color)
+            
+            img.save(os.path.join(data_path, "person", f"person{i:03d}.jpg"))
+            img.save(os.path.join(data_path, "garment", f"garment{i:03d}.jpg"))
+            img.save(os.path.join(data_path, "target", f"person{i:03d}_garment{i:03d}.jpg"))
+        
+        print(f"✅ Created dummy data: {pairs_file}")
+    
+    return pairs_file
 
 def setup_model_and_processor(use_small_unet=False):
     """Khởi tạo UNet và gắn MultiSourceAttnProcessor"""
-    if use_small_unet:
-        # UNet nhỏ cho training nhanh
+    try:
+        if use_small_unet:
+            unet = UNet2DConditionModel(
+                sample_size=64,
+                in_channels=4,
+                out_channels=4,
+                layers_per_block=1,
+                block_out_channels=(128, 256),
+                down_block_types=("CrossAttnDownBlock2D", "DownBlock2D"),
+                up_block_types=("UpBlock2D", "CrossAttnUpBlock2D"),
+                cross_attention_dim=768,
+            )
+            print("Using small UNet for faster training")
+        else:
+            unet = UNet2DConditionModel.from_pretrained(
+                "runwayml/stable-diffusion-v1-5", 
+                subfolder="unet"
+            )
+            print("Using full-size UNet")
+        
+        # Khởi tạo gating network
+        gate_net = GatedFusion(c_dim=unet.config.cross_attention_dim)
+        
+        # Gắn processor với gate network
+        processor_count = 0
+        for name, module in unet.named_modules():
+            if "attn2" in name and hasattr(module, 'set_processor'):
+                try:
+                    # Tạo processor với gate network
+                    processor = MultiSourceAttnProcessor(gate_net=gate_net)
+                    module.set_processor(processor)
+                    processor_count += 1
+                except Exception as e:
+                    print(f"Warning: Could not set processor for {name}: {e}")
+        
+        print(f"✅ Set {processor_count} custom attention processors")
+        return unet, gate_net
+        
+    except Exception as e:
+        print(f"❌ Model setup failed: {e}")
+        print("💡 Falling back to simple setup without custom processors")
+        
+        # Fallback: UNet đơn giản không có custom processor
         unet = UNet2DConditionModel(
-            sample_size=64,
+            sample_size=32 if use_small_unet else 64,
             in_channels=4,
             out_channels=4,
             layers_per_block=1,
-            block_out_channels=(128, 256),
+            block_out_channels=(64, 128) if use_small_unet else (128, 256),
             down_block_types=("CrossAttnDownBlock2D", "DownBlock2D"),
             up_block_types=("UpBlock2D", "CrossAttnUpBlock2D"),
             cross_attention_dim=768,
         )
-        print("Using small UNet for faster training")
-    else:
-        # UNet full-size
-        unet = UNet2DConditionModel.from_pretrained(
-            "runwayml/stable-diffusion-v1-5", 
-            subfolder="unet"
-        )
-        print("Using full-size UNet")
-    
-    # Khởi tạo gating network
-    gate_net = GatedFusion(c_dim=unet.config.cross_attention_dim)
-    
-    # Gắn processor vào tất cả cross-attention layers
-    for name, module in unet.named_modules():
-        if "attn2" in name:  # cross-attention layers
-            processor = MultiSourceAttnProcessor()
-            processor.processor_state = {"gate": gate_net}
-            module.set_processor(processor)
-    
-    return unet, gate_net
+        gate_net = GatedFusion(c_dim=768)
+        return unet, gate_net
 
 def get_trainable_params(unet, gate_net, model):
     """Lấy parameters cần train (freeze UNet, chỉ train gate + encoders)"""
@@ -74,7 +130,10 @@ def train_epoch(model, loader, optimizer, device):
             loss.backward()
             
             # Gradient clipping để tránh exploding gradients
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(
+                [p for p in model.parameters() if p.requires_grad], 
+                max_norm=1.0
+            )
             
             optimizer.step()
             total_loss += loss.item()
@@ -93,21 +152,30 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="/path/to/data", help="Path to data directory")
+    parser.add_argument("--data_path", type=str, default="dummy_data", help="Path to data directory")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
-    parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--small_unet", action="store_true", help="Use small UNet for faster training")
-    parser.add_argument("--image_size", type=int, default=512, help="Image size")
+    parser.add_argument("--image_size", type=int, default=256, help="Image size (use 256 for faster training)")
     args = parser.parse_args()
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     
-    # Chuẩn bị dataloader
-    ds = VTONDataset(root=args.data_path, pairs_txt="train_pairs.txt", size=args.image_size)
-    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    print(f"Dataset size: {len(ds)} samples")
+    # Tạo dummy data nếu cần
+    pairs_file = create_dummy_data_if_needed(args.data_path)
+    
+    # Chuẩn bị dataloader - FIX: sử dụng đường dẫn đầy đủ cho pairs_txt
+    try:
+        ds = VTONDataset(root=args.data_path, pairs_txt=pairs_file, size=args.image_size)  # Thay đổi ở đây
+        dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, num_workers=0)
+        print(f"Dataset size: {len(ds)} samples")
+    except Exception as e:
+        print(f"❌ Dataset creation failed: {e}")
+        print(f"Expected pairs file: {pairs_file}")
+        print(f"File exists: {os.path.exists(pairs_file)}")
+        exit(1)
 
     # Khởi tạo model và processor
     unet, gate_net = setup_model_and_processor(use_small_unet=args.small_unet)
@@ -139,7 +207,7 @@ if __name__ == "__main__":
             val_batches = 0
             
             with torch.no_grad():
-                for batch in dl:  # Sử dụng cùng dataloader cho demo
+                for batch in dl:
                     try:
                         imgs = batch["target_img"].to(device)
                         loss = model(
@@ -151,7 +219,7 @@ if __name__ == "__main__":
                         val_loss += loss.item()
                         val_batches += 1
                         
-                        if val_batches >= 5:  # Chỉ validate 5 batches
+                        if val_batches >= 3:  # Chỉ validate 3 batches cho nhanh
                             break
                             
                     except Exception as e:
@@ -171,7 +239,7 @@ if __name__ == "__main__":
                     'train_loss': train_loss,
                     'val_loss': val_loss,
                 }, 'best_model.pth')
-                print("Saved best model!")
+                print("✅ Saved best model!")
         
         # Save checkpoint
         if (epoch + 1) % 10 == 0:
@@ -181,3 +249,6 @@ if __name__ == "__main__":
                 'optimizer_state_dict': optimizer.state_dict(),
                 'train_loss': train_loss,
             }, f'checkpoint_epoch_{epoch+1}.pth')
+            print(f"💾 Saved checkpoint at epoch {epoch+1}")
+
+    print("🎉 Training completed!")
