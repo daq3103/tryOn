@@ -5,7 +5,6 @@ class GarmentEncoder(nn.Module):
     """
     Biến ảnh áo/quần (H,W,3) -> chuỗi token [B, L_g, C]
     Cách đơn giản: backbone CNN + flatten không gian.
-    Có thể thay bằng ViT để có token tự nhiên hơn.
     """
     def __init__(self, out_dim=768):
         super().__init__()

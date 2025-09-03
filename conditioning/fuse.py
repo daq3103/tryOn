@@ -13,7 +13,15 @@ class GatedFusion(nn.Module):
         )
 
     def forward(self, person_global, t_embed):
+        """
+        input: person_global: [B, C], t_embed: [B, C]
+        B là kích thước batch
+        C là kích thước của đặc trưng
+        """
         g = torch.cat([person_global, t_embed], dim=-1)
         logits = self.fc(g)            # [B,3]
         alphas = torch.softmax(logits, dim=-1)
-        return alphas                  # [B,3]
+        return alphas                  
+
+# example alphas = [[0.7, 0.2, 0.1],
+#                   [0.3, 0.4, 0.3]]

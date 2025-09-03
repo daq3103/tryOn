@@ -16,29 +16,32 @@ from PIL import Image
 
 def create_dummy_data():
     """Tạo dữ liệu giả để test training"""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Tạo thư mục
-        for folder in ["person", "garment", "target", "pose", "parsing"]:
-            os.makedirs(os.path.join(temp_dir, folder), exist_ok=True)
-        
-        # Tạo file pairs
-        pairs_file = os.path.join(temp_dir, "train_pairs.txt")
-        with open(pairs_file, 'w') as f:
-            for i in range(10):  # 10 samples
-                f.write(f"person{i}.jpg\tgarment{i}.jpg\t\"a person wearing clothes\"\n")
-        
-        # Tạo ảnh test (64x64 để nhanh)
-        for i in range(10):
-            img = Image.new('RGB', (64, 64), color=(i*25, i*25, i*25))
-            img.save(os.path.join(temp_dir, "person", f"person{i}.jpg"))
-            img.save(os.path.join(temp_dir, "garment", f"garment{i}.jpg"))
-            img.save(os.path.join(temp_dir, "target", f"person{i}_garment{i}.jpg"))
-        
-        return temp_dir, pairs_file
+    # Tạo thư mục temp_data trong project
+    temp_dir = "temp_data"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # Tạo thư mục con
+    for folder in ["person", "garment", "target", "pose", "parsing"]:
+        os.makedirs(os.path.join(temp_dir, folder), exist_ok=True)
+    
+    # Tạo file pairs
+    pairs_file = os.path.join(temp_dir, "train_pairs.txt")
+    with open(pairs_file, 'w') as f:
+        for i in range(10):  # 10 samples
+            f.write(f"person{i}.jpg\tgarment{i}.jpg\t\"a person wearing clothes\"\n")
+    
+    # Tạo ảnh test (64x64 để nhanh)
+    for i in range(10):
+        img = Image.new('RGB', (64, 64), color=(i*25, i*25, i*25))
+        img.save(os.path.join(temp_dir, "person", f"person{i}.jpg"))
+        img.save(os.path.join(temp_dir, "garment", f"garment{i}.jpg"))
+        img.save(os.path.join(temp_dir, "target", f"person{i}_garment{i}.jpg"))
+    
+    return temp_dir, pairs_file
 
 def setup_small_model():
     """Setup model nhỏ cho training nhanh"""
-    # UNet rất nhỏ
+    # UNet rất nhỏ - có thể giảm thêm cho GPU yếu
     unet = UNet2DConditionModel(
         sample_size=32,  # Nhỏ hơn nữa
         in_channels=4,
@@ -50,15 +53,15 @@ def setup_small_model():
         cross_attention_dim=768,
     )
     
+    # Cho GPU < 2GB, uncomment dòng dưới:
+    # block_out_channels=(32, 64)  # Còn nhỏ hơn nữa
+    # cross_attention_dim=384      # Giảm attention dim
+    
     # Gating network
     gate_net = GatedFusion(c_dim=unet.config.cross_attention_dim)
     
-    # Gắn processor
-    for name, module in unet.named_modules():
-        if "attn2" in name:
-            processor = MultiSourceAttnProcessor()
-            processor.processor_state = {"gate": gate_net}
-            module.set_processor(processor)
+    # Skip custom processor cho bây giờ - dùng standard cross attention
+    print("Using standard cross-attention (skipping custom processor for simplicity)")
     
     return unet, gate_net
 
@@ -74,7 +77,7 @@ def train_fast():
     print(f"Using device: {device}")
     
     # Dataset nhỏ
-    ds = VTONDataset(root=data_dir, pairs_txt="train_pairs.txt", size=64)
+    ds = VTONDataset(root=data_dir, pairs_txt=pairs_file, size=64)
     dl = DataLoader(ds, batch_size=4, shuffle=True, num_workers=0)  # num_workers=0 để tránh lỗi
     print(f"Dataset: {len(ds)} samples")
     
