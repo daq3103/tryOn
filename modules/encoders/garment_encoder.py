@@ -1,11 +1,13 @@
-import torch, torch.nn as nn
+import torch.nn as nn
 import torchvision.models as tvm
+
 
 class GarmentEncoder(nn.Module):
     """
     Biến ảnh áo/quần (H,W,3) -> chuỗi token [B, L_g, C]
     Cách đơn giản: backbone CNN + flatten không gian.
     """
+
     def __init__(self, out_dim=768):
         super().__init__()
         backbone = tvm.resnet50(weights=tvm.ResNet50_Weights.IMAGENET1K_V2)
@@ -14,8 +16,7 @@ class GarmentEncoder(nn.Module):
         self.out_dim = out_dim
 
     def forward(self, x):  # x: [B,3,H,W]
-        f = self.cnn(x)               # [B,2048,h,w]
-        f = self.proj(f)              # [B,C,h,w]
-        B,C,h,w = f.shape
-        tokens = f.flatten(2).transpose(1,2)  # [B, L=h*w, C]
+        f = self.cnn(x)  # [B,2048,h,w]
+        f = self.proj(f)  # [B,C,h,w]
+        tokens = f.flatten(2).transpose(1, 2)  # [B, L=h*w, C]
         return tokens
