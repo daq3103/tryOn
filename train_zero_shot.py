@@ -3,17 +3,7 @@ from torch.utils.data import DataLoader
 from data.datasets import VTONDataset
 from models.zero_shot_tryon import ZeroShotTryOn
 import os
-
-
-def setup_model_and_processor():
-    from diffusers import UNet2DConditionModel
-
-    unet = UNet2DConditionModel.from_pretrained(
-        "runwayml/stable-diffusion-v1-5", subfolder="unet"
-    )
-    print("Using full-size UNet")
-    return unet
-
+from diffusers import UNet2DConditionModel
 
 def get_trainable_params(model):
     # Freeze toàn bộ UNet & VAE
@@ -94,8 +84,17 @@ if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    pairs_file = os.path.join(args.data_path, "train_pairs.txt")
+    # Check data path exists
+    if not os.path.exists(args.data_path):
+        print(f"❌ Data path does not exist: {args.data_path}")
+        exit(1)
 
+    pairs_file = os.path.join(args.data_path, "train_pairs.txt")
+    if not os.path.exists(pairs_file):
+        print(f"❌ Pairs file not found: {pairs_file}")
+        exit(1)
+
+    # Initialize dataset
     try:
         ds = VTONDataset(
             root=args.data_path, pairs_txt=pairs_file, size=args.image_size
@@ -104,9 +103,12 @@ if __name__ == "__main__":
         print(f"Dataset size: {len(ds)} samples")
     except Exception as e:
         print(f"❌ Dataset creation failed: {e}")
+        exit(1)
 
     # Khởi tạo model và processor
-    unet = setup_model_and_processor()
+    unet = UNet2DConditionModel.from_pretrained(
+        "runwayml/stable-diffusion-v1-5", subfolder="unet"
+    )
     model = ZeroShotTryOn(unet).to(device)
 
     # lấy parameters cần train

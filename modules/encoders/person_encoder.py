@@ -2,10 +2,6 @@ import torch.nn as nn
 
 
 class PersonEncoder(nn.Module):
-    """
-    Nhập các kênh điều kiện người: pose map (K kênh), human parsing (N lớp),
-    hoặc ảnh người đã che mặt áo gốc. Ghép lại thành tensor [B,C,H,W].
-    """
 
     def __init__(self, in_ch=3 + 18 + 20, out_dim=768):
         """

@@ -7,7 +7,6 @@ class TextEncoder(torch.nn.Module):
         super().__init__()
         self.tokenizer = CLIPTokenizer.from_pretrained(name)
         self.model = CLIPTextModel.from_pretrained(name)
-        # self.out_dim = self.model.config.hidden_size
 
     @torch.no_grad()
     def encode(self, prompts: list[str], device):
@@ -23,13 +22,4 @@ class TextEncoder(torch.nn.Module):
         return out
 
 
-# # Giữ lại function cũ để tương thích ngược
-# @torch.no_grad()
-# def encode_text(prompts, pipe, device):
-#     tok = pipe.tokenizer(
-#         prompts,
-#         padding="max_length",
-#         max_length=pipe.tokenizer.model_max_length,
-#         return_tensors="pt",
-#     ).to(device)
-#     return pipe.text_encoder(**tok)[0]
+
